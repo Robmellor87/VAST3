@@ -1,9 +1,0 @@
-{
-  "name": "vast-server",
-  "version": "1.0.0",
-  "scripts": {
-    "start": "python3 vast_server.py",
-    "start:8080": "python3 vast_server.py 8080",
-    "start:3000": "python3 vast_server.py 3000"
-  }
-}
