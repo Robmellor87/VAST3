@@ -1,0 +1,6 @@
+[build]
+builder = "nixpacks"
+nixpacksConfigPath = "nixpacks.toml"
+
+[deploy]
+startCommand = "python3 vast_server.py $PORT"
