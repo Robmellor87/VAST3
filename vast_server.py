@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 # Constants
 # ---------------------------------------------------------------------------
 
-MEDIA_URL        = "http://10secvideo.com"
+MEDIA_URL        = "https://pub-a113c784a65f461da10e40b736a78647.r2.dev/10s.mp4"
 MEDIA_TYPE       = "video/mp4"
 BITRATE          = 2000          # kbps — medium quality for CTV
 WIDTH            = 1920
