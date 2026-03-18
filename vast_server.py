@@ -1,19 +1,19 @@
 """
-VAST 3.0 Ad Pod Server for CTV — pure Python stdlib, no dependencies.
+VAST 3.0 Ad Pod Server for CTV -- pure Python stdlib, no dependencies.
 
 Usage:
     python vast_server.py [port]      (default port: 8080)
 
 Endpoints:
-    GET /vast?pod_fill_secs=60                        → 6-ad pod (60s)
-    GET /vast?pod_fill_secs=60&pod_fill_override_rnd=1 → random-length pod
-    GET /health                                        → health check
+    GET /vast?pod_fill_secs=60                        -> 6-ad pod (60s)
+    GET /vast?pod_fill_secs=60&pod_fill_override_rnd=1 -> random-length pod
+    GET /health                                        -> health check
 
 Query-string params:
-    pod_fill_secs           int  — total seconds to fill; divided by 10 gives
-                                   the number of 10-second ads in the pod.
-    pod_fill_override_rnd   0|1  — if 1, ignore pod_fill_secs and pick a random
-                                   value from [0,10,20,30,40,50,60,70,80,90].
+    pod_fill_secs           int  -- total seconds to fill; divided by 10 gives
+                                    the number of 10-second ads in the pod.
+    pod_fill_override_rnd   0|1  -- if 1, ignore pod_fill_secs and pick a random
+                                    value from [0,10,20,30,40,50,60,70,80,90].
 """
 
 import json
@@ -27,9 +27,9 @@ from datetime import datetime, timezone
 # Constants
 # ---------------------------------------------------------------------------
 
-MEDIA_URL        = "https://pub-a113c784a65f461da10e40b736a78647.r2.dev/10s.mp4"
+MEDIA_URL        = "http://10secvideo.com"
 MEDIA_TYPE       = "video/mp4"
-BITRATE          = 2000          # kbps — medium quality for CTV
+BITRATE          = 2000          # kbps -- medium quality for CTV
 WIDTH            = 1920
 HEIGHT           = 1080
 AD_DURATION_SEC  = 10
@@ -124,7 +124,21 @@ class VASTHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # silence default per-request logger
         pass
 
-    def do_GET(self):  # noqa: N802
+    # ------------------------------------------------------------------
+    # CORS preflight
+    # ------------------------------------------------------------------
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self._add_cors_headers()
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    # ------------------------------------------------------------------
+    # GET routing
+    # ------------------------------------------------------------------
+
+    def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path   = parsed.path.rstrip("/")
         params = dict(urllib.parse.parse_qsl(parsed.query))
@@ -148,7 +162,7 @@ class VASTHandler(BaseHTTPRequestHandler):
         ad_count = resolve_ad_count(params)
         xml      = build_vast_pod(ad_count)
         self._log(
-            f"VAST 3.0 Ad Pod — {ad_count} ad(s) "
+            f"VAST 3.0 Ad Pod -- {ad_count} ad(s) "
             f"({ad_count * AD_DURATION_SEC}s) | "
             f"override_rnd={params.get('pod_fill_override_rnd', '0')} | "
             f"pod_fill_secs={params.get('pod_fill_secs', 'n/a')}"
@@ -166,12 +180,18 @@ class VASTHandler(BaseHTTPRequestHandler):
     # Response helpers
     # ------------------------------------------------------------------
 
+    def _add_cors_headers(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
     def _send_xml(self, status: int, body: str):
         encoded = body.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/xml; charset=utf-8")
         self.send_header("Content-Length", str(len(encoded)))
         self.send_header("Cache-Control", "no-cache, no-store")
+        self._add_cors_headers()
         self.end_headers()
         self.wfile.write(encoded)
 
@@ -180,14 +200,15 @@ class VASTHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self._add_cors_headers()
         self.end_headers()
         self.wfile.write(body)
 
     def _log(self, msg: str):
         ts     = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         client = self.client_address[0]
-        print(f"[{ts}] {client} — {self.command} {self.path}")
-        print(f"         → {msg}")
+        print(f"[{ts}] {client} -- {self.command} {self.path}")
+        print(f"         -> {msg}")
 
 
 # ---------------------------------------------------------------------------
@@ -197,9 +218,9 @@ class VASTHandler(BaseHTTPRequestHandler):
 def run(host: str = "0.0.0.0", port: int = 8080):
     server = HTTPServer((host, port), VASTHandler)
     print(f"VAST 3.0 Ad Pod Server listening on http://{host}:{port}\n")
-    print("  GET /vast?pod_fill_secs=60                         → 6-ad pod (60s)")
-    print("  GET /vast?pod_fill_secs=60&pod_fill_override_rnd=1 → random-length pod")
-    print("  GET /health                                        → health check")
+    print("  GET /vast?pod_fill_secs=60                         -> 6-ad pod (60s)")
+    print("  GET /vast?pod_fill_secs=60&pod_fill_override_rnd=1 -> random-length pod")
+    print("  GET /health                                        -> health check")
     print("\nPress Ctrl-C to stop.\n")
     try:
         server.serve_forever()
