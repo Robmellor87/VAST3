@@ -1,5 +1,0 @@
-[phases.setup]
-nixPkgs = ["python312"]
-
-[start]
-cmd = "python3.12 vast_server.py $PORT"
