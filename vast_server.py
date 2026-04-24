@@ -7,6 +7,7 @@ Usage:
 Endpoints:
     GET /vast?pod_fill_secs=60                        -> 6-ad pod (60s)
     GET /vast?pod_fill_secs=60&pod_fill_override_rnd=1 -> random-length pod
+    GET /pixel?ad=001                                 -> 1x1 GIF (impression target)
     GET /health                                        -> health check
 
 Query-string params:
@@ -16,6 +17,7 @@ Query-string params:
                                     value from [0,10,20,30,40,50,60,70,80,90].
 """
 
+import base64
 import json
 import random
 import textwrap
@@ -37,23 +39,30 @@ AD_DURATION_FMT  = "00:00:10"
 
 RANDOM_FILL_OPTIONS = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90]
 
+# 1x1 transparent GIF -- served from /pixel so VAST <Impression> URLs always
+# resolve to a valid 200 response. No tracking is performed.
+PIXEL_GIF_BYTES = base64.b64decode(
+    "R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw=="
+)
+
 
 # ---------------------------------------------------------------------------
 # VAST 3.0 XML builder
 # ---------------------------------------------------------------------------
 
-def build_ad_block(ad_index: int) -> str:
+def build_ad_block(ad_index: int, base_url: str) -> str:
     """Return one <Ad> block (1-indexed sequence) for the pod."""
     ad_id = f"ad-{ad_index:03d}"
     cr_id = f"cr-{ad_index:03d}"
     mf_id = f"mf-{ad_index:03d}"
+    impression_url = f"{base_url}/pixel?ad={ad_index:03d}"
 
     return textwrap.dedent(f"""\
           <Ad id="{ad_id}" sequence="{ad_index}">
             <InLine>
               <AdSystem>PythonVASTServer</AdSystem>
               <AdTitle>Ad {ad_index}</AdTitle>
-              <Impression id="imp-{ad_index:03d}"><![CDATA[]]></Impression>
+              <Impression id="imp-{ad_index:03d}"><![CDATA[{impression_url}]]></Impression>
               <Creatives>
                 <Creative id="{cr_id}" sequence="1">
                   <Linear>
@@ -75,12 +84,14 @@ def build_ad_block(ad_index: int) -> str:
           </Ad>""")
 
 
-def build_vast_pod(ad_count: int) -> str:
+def build_vast_pod(ad_count: int, base_url: str) -> str:
     """Return a complete VAST 3.0 Ad Pod XML string."""
     if ad_count == 0:
         return '<?xml version="1.0" encoding="UTF-8"?>\n<VAST version="3.0"/>\n'
 
-    ad_blocks = "\n".join(build_ad_block(i) for i in range(1, ad_count + 1))
+    ad_blocks = "\n".join(
+        build_ad_block(i, base_url) for i in range(1, ad_count + 1)
+    )
 
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -145,6 +156,7 @@ class VASTHandler(BaseHTTPRequestHandler):
 
         routes = {
             "/vast":   self._handle_vast,
+            "/pixel":  self._handle_pixel,
             "/health": self._handle_health,
         }
 
@@ -160,14 +172,20 @@ class VASTHandler(BaseHTTPRequestHandler):
 
     def _handle_vast(self, params: dict):
         ad_count = resolve_ad_count(params)
-        xml      = build_vast_pod(ad_count)
+        base_url = self._request_base_url()
+        xml      = build_vast_pod(ad_count, base_url)
         self._log(
             f"VAST 3.0 Ad Pod -- {ad_count} ad(s) "
             f"({ad_count * AD_DURATION_SEC}s) | "
             f"override_rnd={params.get('pod_fill_override_rnd', '0')} | "
-            f"pod_fill_secs={params.get('pod_fill_secs', 'n/a')}"
+            f"pod_fill_secs={params.get('pod_fill_secs', 'n/a')} | "
+            f"base_url={base_url}"
         )
         self._send_xml(200, xml)
+
+    def _handle_pixel(self, params: dict):
+        self._send_gif(200, PIXEL_GIF_BYTES)
+        self._log(f"Pixel served | ad={params.get('ad', 'n/a')}")
 
     def _handle_health(self, _params: dict):
         self._send_json(200, {
@@ -180,10 +198,34 @@ class VASTHandler(BaseHTTPRequestHandler):
     # Response helpers
     # ------------------------------------------------------------------
 
+    def _request_base_url(self) -> str:
+        """
+        Build an absolute base URL (scheme://host) from request headers.
+
+        Respects X-Forwarded-Proto (set by Railway's edge proxy) so that
+        Impression URLs are emitted as https://... in production, and falls
+        back to http + server_address locally.
+        """
+        proto = self.headers.get("X-Forwarded-Proto", "http").split(",")[0].strip()
+        host  = self.headers.get("Host")
+        if not host:
+            ip, port = self.server.server_address[:2]
+            host = f"{ip}:{port}"
+        return f"{proto}://{host}"
+
     def _add_cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+    def _send_gif(self, status: int, body: bytes):
+        self.send_response(status)
+        self.send_header("Content-Type", "image/gif")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-cache, no-store")
+        self._add_cors_headers()
+        self.end_headers()
+        self.wfile.write(body)
 
     def _send_xml(self, status: int, body: str):
         encoded = body.encode("utf-8")
@@ -220,6 +262,7 @@ def run(host: str = "0.0.0.0", port: int = 8080):
     print(f"VAST 3.0 Ad Pod Server listening on http://{host}:{port}\n")
     print("  GET /vast?pod_fill_secs=60                         -> 6-ad pod (60s)")
     print("  GET /vast?pod_fill_secs=60&pod_fill_override_rnd=1 -> random-length pod")
+    print("  GET /pixel?ad=001                                  -> 1x1 GIF (impression)")
     print("  GET /health                                        -> health check")
     print("\nPress Ctrl-C to stop.\n")
     try:
